@@ -23,10 +23,22 @@ import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Locale;
 
+import com.google.android.material.snackbar.Snackbar;
+
 /**
  * Displays the screen used to create, edit, or delete an event.
  */
 public class EventDetailsFragment extends Fragment {
+
+    // Retain the event being edited for use by asynchronous
+    // callbacks and button listeners.
+    private Event eventToEdit;
+
+    // Track whether an existing event is being retrieved from the database.
+    private boolean isLoadingEvent = false;
+
+    // Track whether a database operation is awaiting completion.
+    private boolean isModifyingEvent = false;
 
     // Tracks whether the user has changed any event information.
     private boolean isDirty = false;
@@ -164,48 +176,124 @@ public class EventDetailsFragment extends Fragment {
             eventId = getArguments().getInt("eventId", -1);
         }
 
-        Event existingEvent = null;
-
         // Load the selected event and populate the form.
         if (eventId != -1) {
-            existingEvent = repository.getEventById(eventId);
 
-            if (existingEvent != null) {
-                editTitle.setText(existingEvent.getTitle());
-                editDate.setText(existingEvent.getDate());
+            // Disable all input-capable controls to prevent changes until
+            // the existing event finishes loading.
+            isLoadingEvent = true;
+            editTitle.setEnabled(false);
+            editDate.setEnabled(false);
+            editTime.setEnabled(false);
+            editDescription.setEnabled(false);
+            buttonSave.setEnabled(false);
+            buttonDelete.setEnabled(false);
 
-                // Initialize the selected date from the existing event.
-                try {
-                    SimpleDateFormat dateFormat =
-                            new SimpleDateFormat("MM/dd/yyyy", Locale.US);
+            // Retrieve the existing event without blocking the UI thread.
+            repository.getEventById(eventId, new EventRepository.RepositoryCallback<Event>() {
+                @Override
+                public void onSuccess(Event event) {
 
-                    selectedDate.setTime(
-                            dateFormat.parse(existingEvent.getDate())
-                    );
+                    // Ignore results intended for a view that is no longer active.
+                    if (getView() != view) {
+                        return;
+                    }
 
-                } catch (Exception e) {
-                    // Retain today's date if the stored date cannot be parsed.
+                    // Prevent editing when the requested event no longer exists.
+                    if (event == null) {
+                        isLoadingEvent = false;
+
+                        // Keep the editor disabled to avoid creating an unintended event.
+                        Snackbar.make(
+                                view,
+                                "The requested event could not be found.",
+                                Snackbar.LENGTH_LONG
+                        ).show();
+
+                        return;
+                    }
+
+                    // Retain the event for subsequent Save and Delete operations.
+                    eventToEdit = event;
+
+                    editTitle.setText(event.getTitle());
+                    editDate.setText(event.getDate());
+
+                    // Initialize the selected date from the existing event.
+                    try {
+                        SimpleDateFormat dateFormat =
+                                new SimpleDateFormat("MM/dd/yyyy", Locale.US);
+
+                        selectedDate.setTime(
+                                dateFormat.parse(event.getDate())
+                        );
+
+                    } catch (Exception e) {
+                        // Retain today's date if the stored date cannot be parsed.
+                    }
+
+                    editTime.setText(event.getTime());
+
+                    // Initialize the selected time from the existing event.
+                    try {
+                        SimpleDateFormat timeFormat =
+                                new SimpleDateFormat("h:mm a", Locale.US);
+
+                        selectedTime.setTime(
+                                timeFormat.parse(event.getTime())
+                        );
+
+                    } catch (Exception e) {
+                        // Retain the current time if the stored time cannot be parsed.
+                    }
+
+                    editDescription.setText(event.getDescription());
+
+                    buttonDelete.setVisibility(View.VISIBLE);
+
+                    // Now that the loading has completed, allow the user to edit the event .
+                    isLoadingEvent = false;
+                    editTitle.setEnabled(true);
+                    editDate.setEnabled(true);
+                    editTime.setEnabled(true);
+                    editDescription.setEnabled(true);
+
+                    // Enable deletion after successfully loading the existing event.
+                    buttonDelete.setEnabled(true);
+
+                    // Reset the dirty flag to treat the loaded values as unchanged until
+                    // the user edits them.
+                    isDirty = false;
+                    buttonSave.setEnabled(false);
                 }
 
-                editTime.setText(existingEvent.getTime());
+                @Override
+                public void onError(Exception error) {
 
-                // Initialize the selected time from the existing event.
-                try {
-                    SimpleDateFormat timeFormat =
-                            new SimpleDateFormat("h:mm a", Locale.US);
+                    // Ignore results intended for a view that is no longer active.
+                    if (getView() != view) {
+                        return;
+                    }
 
-                    selectedTime.setTime(
-                            timeFormat.parse(existingEvent.getTime())
-                    );
+                    // Mark the database loading operation as complete.
+                    isLoadingEvent = false;
 
-                } catch (Exception e) {
-                    // Retain the current time if the stored time cannot be parsed.
+                    // Keep the form disabled to prevent editing an event that could not be loaded.
+                    editTitle.setEnabled(false);
+                    editDate.setEnabled(false);
+                    editTime.setEnabled(false);
+                    editDescription.setEnabled(false);
+                    buttonSave.setEnabled(false);
+                    buttonDelete.setEnabled(false);
+
+                    // Report the database error without terminating the application.
+                    Snackbar.make(
+                            view,
+                            "Unable to load the event.",
+                            Snackbar.LENGTH_LONG
+                    ).show();
                 }
-
-                editDescription.setText(existingEvent.getDescription());
-
-                buttonDelete.setVisibility(View.VISIBLE);
-            }
+            });
         }
 
         // Begin monitoring all editable fields.
@@ -218,8 +306,6 @@ public class EventDetailsFragment extends Fragment {
         isDirty = false;
         buttonSave.setEnabled(false);
 
-        Event eventToEdit = existingEvent;
-
         // Confirm before permanently deleting an existing event.
         buttonDelete.setOnClickListener(v -> {
             if (eventToEdit == null) {
@@ -231,11 +317,56 @@ public class EventDetailsFragment extends Fragment {
                     .setMessage(R.string.delete_event_message)
                     .setNegativeButton(R.string.cancel, null)
                     .setPositiveButton(R.string.delete, (dialog, which) -> {
-                        repository.deleteEvent(eventToEdit);
 
-                        NavHostFragment.findNavController(
-                                EventDetailsFragment.this
-                        ).navigateUp();
+                        // Ignore deletion requests while an operation is pending.
+                        if (isModifyingEvent) {
+                            return;
+                        }
+
+                        // Prevent changes while the database processes the deletion.
+                        isModifyingEvent = true;
+                        editTitle.setEnabled(false);
+                        editDate.setEnabled(false);
+                        editTime.setEnabled(false);
+                        editDescription.setEnabled(false);
+                        buttonSave.setEnabled(false);
+                        buttonDelete.setEnabled(false);
+                        buttonCancel.setEnabled(false);
+
+                        // Delete the event without blocking the UI thread.
+                        repository.deleteEvent(eventToEdit, new EventRepository.RepositoryCallback<Void>() {
+                            @Override
+                            public void onSuccess(Void result) {
+
+                                // Ignore results intended for a view that is no longer active.
+                                if (getView() != view) {
+                                    return;
+                                }
+
+                                // Return to the event list only after deletion succeeds.
+                                NavHostFragment.findNavController(EventDetailsFragment.this)
+                                        .navigateUp();
+                            }
+
+                            @Override
+                            public void onError(Exception error) {
+
+                                // Ignore results intended for a view that is no longer active.
+                                if (getView() != view) {
+                                    return;
+                                }
+
+                                // Restore editing controls without discarding the user's equity.
+                                restoreEditor(view);
+
+                                // Notify the user that the event could not be deleted.
+                                Snackbar.make(
+                                        view,
+                                        "Unable to delete the event.",
+                                        Snackbar.LENGTH_LONG
+                                ).show();
+                            }
+                        });
                     })
                     .show();
         });
@@ -263,6 +394,23 @@ public class EventDetailsFragment extends Fragment {
         // Insert a new event or update the existing event.
         buttonSave.setOnClickListener(v -> {
 
+            // Ignore additional Save requests while a database operation is pending.
+            if (isModifyingEvent) {
+                return;
+            }
+
+            // Prevent another Save request until the current operation completes.
+            isModifyingEvent = true;
+            buttonSave.setEnabled(false);
+
+            // Prevent changes to the event while the save operation is pending.
+            editTitle.setEnabled(false);
+            editDate.setEnabled(false);
+            editTime.setEnabled(false);
+            editDescription.setEnabled(false);
+            buttonDelete.setEnabled(false);
+            buttonCancel.setEnabled(false);
+
             if (eventToEdit == null) {
 
                 Event event = new Event(
@@ -273,7 +421,40 @@ public class EventDetailsFragment extends Fragment {
                         editDescription.getText().toString()
                 );
 
-                repository.insertEvent(event);
+                // Insert the new event without blocking the UI thread.
+                repository.insertEvent(event, new EventRepository.RepositoryCallback<Long>() {
+                    @Override
+                    public void onSuccess(Long eventId) {
+
+                        // Ignore results intended for a view that is no longer active.
+                        if (getView() != view) {
+                            return;
+                        }
+
+                        // Return to the event list after the insert succeeds.
+                        NavHostFragment.findNavController(EventDetailsFragment.this)
+                                .navigateUp();
+                    }
+
+                    @Override
+                    public void onError(Exception error) {
+
+                        // Ignore results intended for a view that is no longer active.
+                        if (getView() != view) {
+                            return;
+                        }
+
+                        // Restore the editor while preserving the user's changes.
+                        restoreEditor(view);
+
+                        // Notify the user that the event could not be saved.
+                        Snackbar.make(
+                                view,
+                                "Unable to save the event.",
+                                Snackbar.LENGTH_LONG
+                        ).show();
+                    }
+                });
 
             } else {
 
@@ -282,17 +463,78 @@ public class EventDetailsFragment extends Fragment {
                 eventToEdit.setTime(editTime.getText().toString());
                 eventToEdit.setDescription(editDescription.getText().toString());
 
-                repository.updateEvent(eventToEdit);
-            }
+                // Update the existing event without blocking the UI thread.
+                repository.updateEvent(eventToEdit, new EventRepository.RepositoryCallback<Void>() {
+                    @Override
+                    public void onSuccess(Void result) {
 
-            NavHostFragment.findNavController(EventDetailsFragment.this)
-                    .navigateUp();
+                        // Ignore results intended for a view that is no longer active.
+                        if (getView() != view) {
+                            return;
+                        }
+
+                        // Return to the event list only after the update succeeds.
+                        NavHostFragment.findNavController(EventDetailsFragment.this)
+                                .navigateUp();
+                    }
+
+                    @Override
+                    public void onError(Exception error) {
+
+                        // Ignore results intended for a view that is no longer active.
+                        if (getView() != view) {
+                            return;
+                        }
+
+                        // Restore the editor while preserving the user's changes.
+                        restoreEditor(view);
+
+                        // Notify the user when the update fails.
+                        Snackbar.make(
+                                view,
+                                "Unable to update the event.",
+                                Snackbar.LENGTH_LONG
+                        ).show();
+                    }
+                });
+
+            }
         });
 
         // Set the initial focus to the event name field.
         editTitle.requestFocus();
 
         return view;
+    }
+
+    /**
+     * Restore the event editor after an unsuccessful database modification.
+     *
+     * @param view Event details screen containing the editing controls
+     */
+    private void restoreEditor(View view) {
+
+        // Allow another database operation while preserving the user's changes.
+        isModifyingEvent = false;
+
+        // Restore access to the event fields and buttons.
+        view.findViewById(R.id.editEventName).setEnabled(true);
+        view.findViewById(R.id.editDate).setEnabled(true);
+        view.findViewById(R.id.editTime).setEnabled(true);
+        view.findViewById(R.id.editDescription).setEnabled(true);
+        view.findViewById(R.id.buttonCancel).setEnabled(true);
+
+        // Allow deletion only when editing an existing event.
+        view.findViewById(R.id.buttonDelete).setEnabled(eventToEdit != null);
+
+        // Restore Save when valid changes are still present.
+        MaterialButton buttonSave = view.findViewById(R.id.buttonSave);
+        updateSaveButton(
+                buttonSave,
+                view.findViewById(R.id.editEventName),
+                view.findViewById(R.id.editDate),
+                view.findViewById(R.id.editTime)
+        );
     }
 
     /**
@@ -322,8 +564,11 @@ public class EventDetailsFragment extends Fragment {
                 ? ""
                 : editTime.getText().toString().trim();
 
+        // Enable Save only when loading is complete and there is user equity.
         buttonSave.setEnabled(
-                isDirty
+                !isLoadingEvent
+                        && !isModifyingEvent
+                        && isDirty
                         && !title.isEmpty()
                         && !date.isEmpty()
                         && !time.isEmpty()

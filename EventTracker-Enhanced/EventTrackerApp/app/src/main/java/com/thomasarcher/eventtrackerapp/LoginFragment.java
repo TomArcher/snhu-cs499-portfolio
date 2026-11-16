@@ -22,8 +22,10 @@ import com.google.android.material.textfield.TextInputEditText;
  */
 public class LoginFragment extends Fragment {
 
+    // Track whether an authentication operation is awaiting completion.
+    private boolean isAuthenticating = false;
 
-/**
+    /**
      * Required empty public constructor.
      */
     public LoginFragment() {
@@ -88,7 +90,9 @@ public class LoginFragment extends Fragment {
                         : editPassword.getText().toString().trim();
 
                 boolean enableButtons =
-                        !username.isEmpty() && !password.isEmpty();
+                        !isAuthenticating
+                                && !username.isEmpty()
+                                && !password.isEmpty();
 
                 buttonLogin.setEnabled(enableButtons);
                 buttonCreateAccount.setEnabled(enableButtons);
@@ -123,32 +127,75 @@ public class LoginFragment extends Fragment {
             EventRepository repository =
                     EventRepository.getInstance(requireContext());
 
+            // Mark authentication as pending.
+            isAuthenticating = true;
+
+            // Prevent additional authentication requests while login is pending.
+            buttonLogin.setEnabled(false);
+            buttonCreateAccount.setEnabled(false);
+
             // Query for the entered username and password.
-            User user = repository.getUser(username, password);
+            repository.getUser(username, password, new EventRepository.RepositoryCallback<User>() {
+                @Override
+                public void onSuccess(User user) {
 
-            // If user found...
-            if (user != null) {
+                    // Ignore results intended for a view that is no longer active.
+                    if (getView() != view) {
+                        return;
+                    }
 
-                // Store the logged-in user's ID.
-                sessionViewModel.setUserId(user.getId());
+                    // Reject credentials that do not match an existing user.
+                    if (user == null) {
 
-                // Navigate to the list fragment.
-                NavHostFragment.findNavController(LoginFragment.this)
-                        .navigate(R.id.action_loginFragment_to_eventListFragment);
+                        // Allow another authentication attempt.
+                        isAuthenticating = false;
+                        buttonLogin.setEnabled(true);
+                        buttonCreateAccount.setEnabled(true);
 
-                // Initialize the username and password fields values.
-                editUsername.setText("");
-                editPassword.setText("");
+                        // Notify the user that the login failed.
+                        Toast.makeText(
+                                requireContext(),
+                                R.string.login_failed,
+                                Toast.LENGTH_SHORT
+                        ).show();
+                        return;
+                    }
 
-            } else { // If user NOT found...
+                    // Mark authentication as complete.
+                    isAuthenticating = false;
 
-                // Display login-failure message.
-                Toast.makeText(
-                        requireContext(),
-                        R.string.login_failed,
-                        Toast.LENGTH_SHORT
-                ).show();
-            }
+                    // Store the authenticated user's ID.
+                    sessionViewModel.setUserId(user.getId());
+
+                    // Initialize the username and password fields values.
+                    editUsername.setText("");
+                    editPassword.setText("");
+
+                    // Navigate to the event list.
+                    NavHostFragment.findNavController(LoginFragment.this)
+                            .navigate(R.id.action_loginFragment_to_eventListFragment);
+                }
+
+                @Override
+                public void onError(Exception error) {
+                    // Ignore callbacks intended for a view that is no longer active.
+                    if (getView() != view) {
+                        return;
+                    }
+
+                    // Allow another authentication attempt.
+                    isAuthenticating = false;
+                    buttonLogin.setEnabled(true);
+                    buttonCreateAccount.setEnabled(true);
+
+                    // Report a database failure separately from invalid credentials.
+                    Toast.makeText(
+                            requireContext(),
+                            "Unable to complete login.",
+                            Toast.LENGTH_SHORT
+                    ).show();
+                }
+            });
         });
 
         // Confirm the account information before creating the account.
@@ -168,59 +215,149 @@ public class LoginFragment extends Fragment {
             EventRepository repository =
                     EventRepository.getInstance(requireContext());
 
+            // Prevent additional requests while checking username availability.
+            isAuthenticating = true;
+            buttonLogin.setEnabled(false);
+            buttonCreateAccount.setEnabled(false);
+
             // Do not allow duplicate usernames.
-            if (repository.getUserByUsername(username) != null) {
+            // Check for an existing username without blocking the UI thread.
+            repository.getUserByUsername(username, new EventRepository.RepositoryCallback<User>() {
+                @Override
+                public void onSuccess(User existingUser) {
 
-                // Display username-in-use message.
-                Toast.makeText(
-                        requireContext(),
-                        R.string.username_exists,
-                        Toast.LENGTH_SHORT
-                ).show();
+                    // Ignore callbacks intended for a view that is no longer active.
+                    if (getView() != view) {
+                        return;
+                    }
 
-                return;
-            }
+                    // Reject usernames that are already registered.
+                    if (existingUser != null) {
 
-            // Build create-account confirmation message
-            // using only the entered username.
-            String message = getString(
-                    R.string.create_account_message,
-                    username
-            );
+                        // Allow another authentication or account-creation attempt.
+                        isAuthenticating = false;
+                        buttonLogin.setEnabled(true);
+                        buttonCreateAccount.setEnabled(true);
 
-            // Build and display account-creation
-            // confirmation dialog box.
-            new MaterialAlertDialogBuilder(requireContext())
-                    .setTitle(R.string.create_account_title)
-                    .setMessage(message)
-                    .setNegativeButton(R.string.cancel, null)
-                    .setPositiveButton(R.string.create_account, (dialog, which) -> {
-
-                        // Instantiate a User object.
-                        User user = new User(username, password);
-
-                        // Insert the new user into the database.
-                        long userId = repository.insertUser(user);
-
-                        // Store the new user's ID.
-                        sessionViewModel.setUserId((int) userId);
-
-                        // Display success message.
+                        // Notify the user that the username already exists.
                         Toast.makeText(
                                 requireContext(),
-                                R.string.account_created,
+                                R.string.username_exists,
                                 Toast.LENGTH_SHORT
                         ).show();
+                        return;
+                    }
 
-                        // Navigate to the list fragment.
-                        NavHostFragment.findNavController(LoginFragment.this)
-                                .navigate(R.id.action_loginFragment_to_eventListFragment);
+                    // Continue account creation when the username is available.
+                    // Build create-account confirmation message
+                    // using only the entered username.
+                    String message = getString(
+                            R.string.create_account_message,
+                            username
+                    );
 
-                        // Initialize the username and password fields values.
-                        editUsername.setText("");
-                        editPassword.setText("");
-                    })
-                    .show();
+                    // Build and display account-creation
+                    // confirmation dialog box.
+                    new MaterialAlertDialogBuilder(requireContext())
+                            .setTitle(R.string.create_account_title)
+                            .setMessage(message)
+                            .setNegativeButton(R.string.cancel, (dialog, which) -> {
+
+                                // Restore authentication controls when account creation is canceled.
+                                isAuthenticating = false;
+                                buttonLogin.setEnabled(true);
+                                buttonCreateAccount.setEnabled(true);
+                            })
+                            .setPositiveButton(R.string.create_account, (dialog, which) -> {
+
+                                // Instantiate a User object.
+                                User user = new User(username, password);
+
+                                // Insert the new user without blocking the UI thread.
+                                repository.insertUser(user, new EventRepository.RepositoryCallback<Long>() {
+                                    @Override
+                                    public void onSuccess(Long userId) {
+
+                                        // Ignore callbacks intended for a view that is no longer active.
+                                        if (getView() != view) {
+                                            return;
+                                        }
+
+                                        // Mark authentication as complete.
+                                        isAuthenticating = false;
+
+                                        // Store the new user's ID.
+                                        sessionViewModel.setUserId(userId.intValue());
+
+                                        // Notify the user that the account was created.
+                                        Toast.makeText(
+                                                requireContext(),
+                                                R.string.account_created,
+                                                Toast.LENGTH_SHORT
+                                        ).show();
+
+                                        // Clear the credentials.
+                                        editUsername.setText("");
+                                        editPassword.setText("");
+
+                                        // Navigate to the event list.
+                                        NavHostFragment.findNavController(LoginFragment.this)
+                                                .navigate(R.id.action_loginFragment_to_eventListFragment);
+                                    }
+
+                                    @Override
+                                    public void onError(Exception error) {
+
+                                        // Ignore callbacks intended for a view that is no longer active.
+                                        if (getView() != view) {
+                                            return;
+                                        }
+
+                                        // Allow another authentication or account-creation attempt.
+                                        isAuthenticating = false;
+                                        buttonLogin.setEnabled(true);
+                                        buttonCreateAccount.setEnabled(true);
+
+                                        // Notify the user that account creation failed.
+                                        Toast.makeText(
+                                                requireContext(),
+                                                "Unable to create the account.",
+                                                Toast.LENGTH_SHORT
+                                        ).show();
+                                    }
+                                });
+                            })
+                            .setOnCancelListener(dialog -> {
+
+                                // Restore authentication controls when account creation is canceled.
+                                isAuthenticating = false;
+                                buttonLogin.setEnabled(true);
+                                buttonCreateAccount.setEnabled(true);
+                            })
+                            .show();
+                }
+
+                @Override
+                public void onError(Exception error) {
+
+                    // Ignore callbacks intended for a view that is no longer active.
+                    if (getView() != view) {
+                        return;
+                    }
+
+                    // Allow another authentication or account-creation attempt.
+                    isAuthenticating = false;
+                    buttonLogin.setEnabled(true);
+                    buttonCreateAccount.setEnabled(true);
+
+                    // Report a failure to check username availability.
+                    Toast.makeText(
+                            requireContext(),
+                            "Unable to check username availability.",
+                            Toast.LENGTH_SHORT
+                    ).show();
+                }
+            });
         });
 
         return view;

@@ -31,6 +31,7 @@ import java.util.Locale;
 import android.content.SharedPreferences;
 import android.text.InputType;
 
+import com.google.android.material.snackbar.Snackbar;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
@@ -229,7 +230,40 @@ public class EventListFragment extends Fragment {
                         .setMessage(R.string.delete_event_message)
                         .setNegativeButton(R.string.cancel, null)
                         .setPositiveButton(R.string.delete, (dialog, which) ->
-                                repository.deleteEvent(event)
+                                repository.deleteEvent(event, new EventRepository.RepositoryCallback<Void>() {
+                                    @Override
+                                    public void onSuccess(Void result) {
+
+                                        // Ignore results intended for a view that is no longer active.
+                                        // This addresses lifecycle cases in which Android destroys the
+                                        // view and then creates a new view for the same Fragment before
+                                        // the database operation finishes.
+                                        if (getView() != view) {
+                                            return;
+                                        }
+
+                                        // Let Room's LiveData refresh the event list.
+                                    }
+
+                                    @Override
+                                    public void onError(Exception error) {
+
+                                        // Ignore results intended for a view that is no longer active.
+                                        // This addresses lifecycle cases in which Android destroys the
+                                        // view and then creates a new view for the same Fragment before
+                                        // the database operation finishes.
+                                        if (getView() != view) {
+                                            return;
+                                        }
+
+                                        // Notify the user that the event could not be deleted.
+                                        Snackbar.make(
+                                                view,
+                                                "Unable to delete the event.",
+                                                Snackbar.LENGTH_LONG
+                                        ).show();
+                                    }
+                                })
                         )
                         .show(),
 
