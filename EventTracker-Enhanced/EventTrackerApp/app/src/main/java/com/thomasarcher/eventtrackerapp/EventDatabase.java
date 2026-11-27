@@ -3,14 +3,19 @@ package com.thomasarcher.eventtrackerapp;
 import androidx.room.Database;
 import androidx.room.RoomDatabase;
 
+import androidx.room.TypeConverters;
+
+import com.thomasarcher.eventtrackerapp.recurrence.RecurrenceRuleConverter;
+
 /**
  * Room database used to store application events and user accounts.
  */
 @Database(
         entities = {Event.class, User.class},
-        version = 3,
+        version = 4,
         exportSchema = false
 )
+@TypeConverters(RecurrenceRuleConverter.class)
 public abstract class EventDatabase extends RoomDatabase {
 
     /**

@@ -2,6 +2,7 @@ package com.thomasarcher.eventtrackerapp;
 
 import androidx.room.Entity;
 import androidx.room.PrimaryKey;
+import com.thomasarcher.eventtrackerapp.recurrence.RecurrenceRule;
 
 /**
  * Represents an event stored in the Room database.
@@ -21,6 +22,28 @@ public class Event {
     private String date;
     private String time;
     private String description;
+
+    // Define the event's recurrence pattern.
+    // Default to a nonrecurring event.
+    private RecurrenceRule recurrenceRule = RecurrenceRule.none();
+
+    /**
+     * Return the recurrence rule associated with the event.
+     *
+     * @return Event recurrence rule
+     */
+    public RecurrenceRule getRecurrenceRule() {
+        return recurrenceRule;
+    }
+
+    /**
+     * Update the recurrence rule associated with the event.
+     *
+     * @param recurrenceRule Event recurrence rule
+     */
+    public void setRecurrenceRule(RecurrenceRule recurrenceRule) {
+        this.recurrenceRule = recurrenceRule;
+    }
 
     /**
      * Creates a new event.
