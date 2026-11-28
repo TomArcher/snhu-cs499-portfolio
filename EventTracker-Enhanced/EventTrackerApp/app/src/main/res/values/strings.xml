@@ -23,7 +23,7 @@
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
     <string name="delete_event_title">Delete event?</string>
-    <string name="delete_event_message">This event will be permanently deleted.</string>
+    <string name="delete_event_message">This event will be permanently deleted. If this event is part of a recurring series, deleting it will permanently remove the entire series and all its occurrences.</string>
     <string name="discard">Discard</string>
     <string name="keep_editing">Keep editing</string>
     <string name="cancel_event_message">You have unsaved changes.</string>
@@ -40,4 +40,9 @@
     <string name="disable_sms">Disable SMS</string>
     <string name="phone_number_required">Enter a phone number to enable SMS notifications.</string>
     <string name="sms_event_reminder">Reminder: %1$s is scheduled today at %2$s.</string>
+    <string name="range_start">From</string>
+    <string name="range_end">Through</string>
+    <string name="range_start_format">From: %1$s</string>
+    <string name="range_end_format">Through: %1$s</string>
+    <string name="recurrence">Recurrence: None</string>
 </resources>

@@ -13,10 +13,29 @@ import android.os.Looper;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import com.thomasarcher.eventtrackerapp.recurrence.EventOccurrence;
+import com.thomasarcher.eventtrackerapp.recurrence.RecurrenceCalculator;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Locale;
+
+import java.time.LocalTime;
+import java.util.Comparator;
+
 /**
  * Provides a single access point for event database operations.
  */
 public class EventRepository {
+
+    // Define the date format used by persisted events.
+    private static final DateTimeFormatter EVENT_DATE_FORMATTER =
+            DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.US);
+
+    // Define the time format used by persisted events.
+    private static final DateTimeFormatter EVENT_TIME_FORMATTER =
+            DateTimeFormatter.ofPattern("h:mm a", Locale.US);
 
     // Generic callback interface
     public interface RepositoryCallback<T> {
@@ -79,6 +98,76 @@ public class EventRepository {
      */
     public LiveData<List<Event>> getAllEvents(int userId) {
         return eventDao.getAllEvents(userId);
+    }
+
+    /**
+     * Generate event occurrences asynchronously within the
+     * specified inclusive date range.
+     *
+     * @param events Original persisted events
+     * @param rangeStart First date of the requested range
+     * @param rangeEnd Last date of the requested range
+     * @param callback Callback to receive occurrences or an error
+     *
+     * Time complexity: O(n + r + k log k)
+     * Auxiliary space complexity: O(m + k)
+     *
+     * n represents the number of original events.
+     * r represents the total recurrence pattern repetitions examined.
+     * k represents the total generated event occurrences.
+     * m represents the maximum occurrences generated for one event.
+     *
+     * Output space complexity: O(k)
+     */
+    public void generateEventOccurrences(
+            List<Event> events,
+            LocalDate rangeStart,
+            LocalDate rangeEnd,
+            RepositoryCallback<List<EventOccurrence>> callback) {
+
+        // Generate occurrences on the background executor.
+        executor.execute(() -> {
+            try {
+                List<EventOccurrence> occurrences = new ArrayList<>();
+
+                // Generate occurrences for each original event.
+                for (Event event : events) {
+
+                    // Convert the persisted event date to a LocalDate.
+                    LocalDate startDate = LocalDate.parse(
+                            event.getDate(),
+                            EVENT_DATE_FORMATTER);
+
+                    // Calculate occurrence dates within the requested range.
+                    List<LocalDate> dates =
+                            RecurrenceCalculator.generateOccurrences(
+                                    startDate,
+                                    rangeStart,
+                                    rangeEnd,
+                                    event.getRecurrenceRule());
+
+                    // Associate each calculated date with its original event.
+                    for (LocalDate date : dates) {
+                        occurrences.add(new EventOccurrence(event, date));
+                    }
+                }
+
+                // Sort occurrences chronologically by date and time.
+                occurrences.sort(
+                        Comparator.comparing(EventOccurrence::getDate)
+                                .thenComparing(occurrence ->
+                                        LocalTime.parse(
+                                                occurrence.getEvent().getTime(),
+                                                EVENT_TIME_FORMATTER)));
+
+                // Deliver the generated occurrences on the UI thread.
+                mainHandler.post(() -> callback.onSuccess(occurrences));
+
+            } catch (Exception e) {
+                // Report occurrence generation errors on the UI thread.
+                mainHandler.post(() -> callback.onError(e));
+            }
+        });
     }
 
     /**

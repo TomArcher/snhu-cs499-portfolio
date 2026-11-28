@@ -23,17 +23,22 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.button.MaterialButton;
 
 import java.util.ArrayList;
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
 import android.content.SharedPreferences;
 import android.text.InputType;
+import android.app.DatePickerDialog;
 
 import com.google.android.material.snackbar.Snackbar;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
+
+import com.thomasarcher.eventtrackerapp.recurrence.EventOccurrence;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+
 
 /**
  * Displays the event list and manages event selection, deletion,
@@ -52,6 +57,19 @@ public class EventListFragment extends Fragment {
 
     // Adapter used to display events in the RecyclerView.
     private EventAdapter eventAdapter;
+
+    // Identify the most recent occurrence generation request.
+    private long occurrenceRequestId;
+
+    // Identify the most recent SMS reminder generation request.
+    private long reminderRequestId;
+
+    private static final DateTimeFormatter EVENT_DATE_FORMATTER =
+            DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.US);
+
+    private LocalDate rangeStart;
+    private LocalDate rangeEnd;
+    private List<Event> currentEvents = new ArrayList<>();
 
     /**
      * Required empty public constructor.
@@ -302,6 +320,30 @@ public class EventListFragment extends Fragment {
 
         super.onViewCreated(view, savedInstanceState);
 
+        // Initialize the viewing range dates if not already
+        // set. This prevents us from overwriting it date
+        // ranges already specified.
+        if (rangeStart == null || rangeEnd == null) {
+            rangeStart = LocalDate.now();
+            rangeEnd = rangeStart.plusDays(30);
+        }
+
+        // Obtain references to the date range buttons.
+        MaterialButton buttonRangeStart =
+                view.findViewById(R.id.buttonRangeStart);
+
+        MaterialButton buttonRangeEnd =
+                view.findViewById(R.id.buttonRangeEnd);
+
+        // Display the initial date range.
+        buttonRangeStart.setText(getString(
+                R.string.range_start_format,
+                rangeStart.format(EVENT_DATE_FORMATTER)));
+
+        buttonRangeEnd.setText(getString(
+                R.string.range_end_format,
+                rangeEnd.format(EVENT_DATE_FORMATTER)));
+
         TextView titleTextView =
                 view.findViewById(R.id.textViewUpcomingEventsTitle);
 
@@ -316,35 +358,213 @@ public class EventListFragment extends Fragment {
         // Get the logged-in user's ID.
         int userId = sessionViewModel.getUserId();
 
+// Allow the user to select the beginning of the viewing range.
+        buttonRangeStart.setOnClickListener(v ->
+                new DatePickerDialog(
+                        requireContext(),
+                        (picker, year, month, day) -> {
+
+                            if (getView() != view) {
+                                return;
+                            }
+
+                            LocalDate selectedDate =
+                                    LocalDate.of(year, month + 1, day);
+
+                            // Reject an invalid date range.
+                            if (selectedDate.isAfter(rangeEnd)) {
+                                Snackbar.make(
+                                        view,
+                                        "From date cannot follow Through date.",
+                                        Snackbar.LENGTH_LONG
+                                ).show();
+                                return;
+                            }
+
+                            rangeStart = selectedDate;
+
+                            buttonRangeStart.setText(getString(
+                                    R.string.range_start_format,
+                                    rangeStart.format(EVENT_DATE_FORMATTER)));
+
+                            refreshOccurrences(view, repository, titleTextView);
+                        },
+                        rangeStart.getYear(),
+                        rangeStart.getMonthValue() - 1,
+                        rangeStart.getDayOfMonth()
+                ).show());
+
+// Allow the user to select the end of the viewing range.
+        buttonRangeEnd.setOnClickListener(v ->
+                new DatePickerDialog(
+                        requireContext(),
+                        (picker, year, month, day) -> {
+
+                            if (getView() != view) {
+                                return;
+                            }
+
+                            LocalDate selectedDate =
+                                    LocalDate.of(year, month + 1, day);
+
+                            // Reject an invalid date range.
+                            if (selectedDate.isBefore(rangeStart)) {
+                                Snackbar.make(
+                                        view,
+                                        "Through date cannot precede From date.",
+                                        Snackbar.LENGTH_LONG
+                                ).show();
+                                return;
+                            }
+
+                            rangeEnd = selectedDate;
+
+                            buttonRangeEnd.setText(getString(
+                                    R.string.range_end_format,
+                                    rangeEnd.format(EVENT_DATE_FORMATTER)));
+
+                            refreshOccurrences(view, repository, titleTextView);
+                        },
+                        rangeEnd.getYear(),
+                        rangeEnd.getMonthValue() - 1,
+                        rangeEnd.getDayOfMonth()
+                ).show());
+
         repository.getAllEvents(userId).observe(
                 getViewLifecycleOwner(),
                 events -> {
-                    if (events == null) {
-                        events = new ArrayList<>();
+
+                    // Cache the current events.
+                    currentEvents = events == null
+                            ? new ArrayList<>()
+                            : new ArrayList<>(events);
+
+                    // Generate SMS reminders for today's event occurrences.
+                    generateTodayReminders(view, repository);
+
+                    // Refresh the displayed occurrences.
+                    refreshOccurrences(view, repository, titleTextView);
+                });
+    }
+
+    /**
+     * Generate and display event occurrences within the selected date range.
+     *
+     * @param view The current fragment view.
+     * @param repository The event repository.
+     * @param titleTextView The event count heading.
+     */
+    private void refreshOccurrences(
+            View view,
+            EventRepository repository,
+            TextView titleTextView) {
+
+        // Identify the current request.
+        long requestId = ++occurrenceRequestId;
+
+        // Generate occurrences on the background executor.
+        repository.generateEventOccurrences(
+                new ArrayList<>(currentEvents),
+                rangeStart,
+                rangeEnd,
+                new EventRepository.RepositoryCallback<List<EventOccurrence>>() {
+
+                    @Override
+                    public void onSuccess(List<EventOccurrence> result) {
+
+                        // Ignore obsolete results.
+                        if (getView() != view
+                                || requestId != occurrenceRequestId) {
+                            return;
+                        }
+
+                        // Display the generated occurrences.
+                        eventAdapter.setOccurrences(result);
+
+                        titleTextView.setText(
+                                getString(
+                                        R.string.upcoming_events,
+                                        result.size()));
                     }
 
-                    // Send SMS reminders for events scheduled for today.
-                    sendTodayReminders(events);
+                    @Override
+                    public void onError(Exception error) {
 
-                    eventAdapter.setEvents(events);
+                        // Ignore obsolete errors.
+                        if (getView() != view
+                                || requestId != occurrenceRequestId) {
+                            return;
+                        }
 
-                    titleTextView.setText(
-                            getString(
-                                    R.string.upcoming_events,
-                                    events.size()
-                            )
-                    );
-                }
-        );
+                        Snackbar.make(
+                                view,
+                                "Unable to generate event occurrences.",
+                                Snackbar.LENGTH_LONG
+                        ).show();
+                    }
+                });
+    }
+
+    /**
+     * Generate event occurrences scheduled for today
+     * independently of the selected viewing range.
+     *
+     * @param view The current fragment view.
+     * @param repository The event repository.
+     */
+    private void generateTodayReminders(
+            View view,
+            EventRepository repository) {
+
+        // Identify the current reminder request.
+        long requestId = ++reminderRequestId;
+
+        // Restrict occurrence generation to today's date.
+        LocalDate today = LocalDate.now();
+
+        repository.generateEventOccurrences(
+                new ArrayList<>(currentEvents),
+                today,
+                today,
+                new EventRepository.RepositoryCallback<List<EventOccurrence>>() {
+
+                    @Override
+                    public void onSuccess(List<EventOccurrence> result) {
+
+                        // Ignore obsolete results.
+                        if (getView() != view
+                                || requestId != reminderRequestId) {
+                            return;
+                        }
+
+                        sendTodayReminders(result);
+                    }
+
+                    @Override
+                    public void onError(Exception error) {
+
+                        // Ignore obsolete errors.
+                        if (getView() != view
+                                || requestId != reminderRequestId) {
+                            return;
+                        }
+
+                        Snackbar.make(
+                                view,
+                                "Unable to generate SMS reminders.",
+                                Snackbar.LENGTH_LONG
+                        ).show();
+                    }
+                });
     }
 
     /**
      * Sends SMS reminders for today's events that have not already
      * generated a reminder.
      *
-     * @param events Events belonging to the logged-in user
+     * @param occurrences Event occurrences scheduled for today.
      */
-    private void sendTodayReminders(List<Event> events) {
+    private void sendTodayReminders(List<EventOccurrence> occurrences) {
 
         boolean permissionGranted =
                 ContextCompat.checkSelfPermission(
@@ -375,21 +595,14 @@ public class EventListFragment extends Fragment {
             return;
         }
 
-        // Get today's date using the same format stored with each event.
-        String today =
-                new SimpleDateFormat(
-                        "MM/dd/yyyy",
-                        Locale.US
-                ).format(new Date());
-
         SmsManager smsManager = SmsManager.getDefault();
 
-        // Send one reminder for each event scheduled for today.
-        for (Event event : events) {
+        // Send one reminder for each occurrence scheduled for today.
+        for (EventOccurrence occurrence : occurrences) {
 
-            if (!today.equals(event.getDate())) {
-                continue;
-            }
+            // Retrieve the original event and format the occurrence date.
+            Event event = occurrence.getEvent();
+            String today = occurrence.getDate().format(EVENT_DATE_FORMATTER);
 
             // Build a unique key to prevent duplicate reminders.
             String reminderKey =

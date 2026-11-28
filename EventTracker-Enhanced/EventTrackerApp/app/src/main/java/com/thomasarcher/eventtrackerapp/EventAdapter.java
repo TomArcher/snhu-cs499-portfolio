@@ -12,11 +12,20 @@ import com.google.android.material.button.MaterialButton;
 
 import java.util.List;
 
+import com.thomasarcher.eventtrackerapp.recurrence.EventOccurrence;
+
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
+
 /**
- * RecyclerView adapter used to display the list of events.
+ * Display dynamically generated event occurrences
+ * in a RecyclerView.
  */
 public class EventAdapter extends RecyclerView.Adapter<EventAdapter.EventViewHolder> {
 
+    // Define the date format used to display event occurrences.
+    private static final DateTimeFormatter EVENT_DATE_FORMATTER =
+            DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy", Locale.US);
     /**
      * Listener for delete button clicks.
      */
@@ -31,37 +40,37 @@ public class EventAdapter extends RecyclerView.Adapter<EventAdapter.EventViewHol
         void onEventClick(Event event);
     }
 
-    // List of events displayed in the RecyclerView.
-    private List<Event> eventList;
+    // List of event occurrences displayed in the RecyclerView.
+    private List<EventOccurrence> occurrenceList;
 
     // Callback interfaces for user interactions.
     private final OnDeleteClickListener deleteClickListener;
     private final OnEventClickListener eventClickListener;
 
     /**
-     * Creates a new EventAdapter.
+     * Initialize an EventAdapter.
      *
-     * @param eventList List of events to display
+     * @param occurrenceList List of event occurrences to display
      * @param deleteClickListener Listener for delete button clicks
      * @param eventClickListener Listener for event item clicks
      */
     public EventAdapter(
-            List<Event> eventList,
+            List<EventOccurrence> occurrenceList,
             OnDeleteClickListener deleteClickListener,
             OnEventClickListener eventClickListener) {
 
-        this.eventList = eventList;
+        this.occurrenceList = occurrenceList;
         this.deleteClickListener = deleteClickListener;
         this.eventClickListener = eventClickListener;
     }
 
     /**
-     * Updates the displayed list of events.
+     * Update the displayed list of event occurrences.
      *
-     * @param events Updated event list
+     * @param occurrences Updated event occurrence list
      */
-    public void setEvents(List<Event> events) {
-        eventList = events;
+    public void setOccurrences(List<EventOccurrence> occurrences) {
+        occurrenceList = occurrences;
         notifyDataSetChanged();
     }
 
@@ -83,39 +92,44 @@ public class EventAdapter extends RecyclerView.Adapter<EventAdapter.EventViewHol
     }
 
     /**
-     * Binds event data to a ViewHolder.
+     * Bind event occurrence data to a ViewHolder.
      *
      * @param holder ViewHolder to populate
-     * @param position Position of the event in the list
+     * @param position Position of the occurrence in the list
      */
     @Override
-    public void onBindViewHolder(@NonNull EventViewHolder holder, int position) {
+    public void onBindViewHolder(
+            @NonNull EventViewHolder holder, int position) {
 
-        Event event = eventList.get(position);
+        // Retrieve the occurrence and its original event.
+        EventOccurrence occurrence = occurrenceList.get(position);
+        Event event = occurrence.getEvent();
 
+        // Display the original event properties and calculated date.
         holder.title.setText(event.getTitle());
-        holder.date.setText(event.getDate());
+        holder.date.setText(
+                occurrence.getDate().format(EVENT_DATE_FORMATTER));
         holder.time.setText(event.getTime());
 
-        // Handle delete button selection.
+        // Delete the original event.
         holder.deleteButton.setOnClickListener(v ->
                 deleteClickListener.onDeleteClick(event)
         );
 
-        // Open the selected event.
+        // Open the original event for editing.
         holder.itemView.setOnClickListener(v ->
                 eventClickListener.onEventClick(event)
         );
     }
 
     /**
-     * Returns the number of events in the list.
+     * Return the number of event occurrences in the list.
      *
-     * @return Event count
+     * @return Event occurrence count
      */
     @Override
     public int getItemCount() {
-        return eventList.size();
+        return occurrenceList.size();
     }
 
     /**
