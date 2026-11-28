@@ -32,23 +32,29 @@
 
         <TextView
             android:id="@+id/textViewEventDate"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
+            android:layout_marginEnd="12dp"
             android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+            android:textStyle="normal"
             app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/buttonDeleteEvent"
             app:layout_constraintTop_toBottomOf="@id/textViewEventTitle"
-            tools:text="August 10, 2026" />
+            tools:text="Friday, November 27, 2026" />
 
         <TextView
             android:id="@+id/textViewEventTime"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginEnd="12dp"
             android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-            app:layout_constraintBaseline_toBaselineOf="@id/textViewEventDate"
-            app:layout_constraintStart_toEndOf="@id/textViewEventDate"
-            tools:text="2:30 PM" />
+            android:textStyle="normal"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/buttonDeleteEvent"
+            app:layout_constraintTop_toBottomOf="@id/textViewEventDate"
+            tools:text="8:00 AM" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/buttonDeleteEvent"
